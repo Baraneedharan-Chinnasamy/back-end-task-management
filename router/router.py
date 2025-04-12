@@ -13,6 +13,7 @@ import random
 from fastapi.responses import JSONResponse
 from typing import Dict, List, Optional
 from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import Request
 
 
 router = APIRouter()
@@ -22,7 +23,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
+blacklisted_tokens = set()
 @router.post("/signup")
 def signup(user: UserCreate, db: Session = Depends(get_db)):
     existing = db.query(User).filter((User.username == user.username) | (User.email == user.email)).first()
@@ -39,14 +40,38 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
     db.refresh(new_user)
     return {"message": "User created successfully"}
 
+def verify_token(token: str = Depends(oauth2_scheme)):
+    if token in blacklisted_tokens:
+        raise HTTPException(status_code=401, detail="Token has been invalidated")
+    
+@router.post("/logout")
+def logout(token: str = Depends(oauth2_scheme)):
+    blacklisted_tokens.add(token)
+    return {"message": "Logged out successfully"}
+
+
 
 @router.post("/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == form_data.username).first()
     if not user or not verify_password(form_data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
     token = create_access_token({"sub": user.username, "employee_id": user.employee_id})
-    return {"access_token": token, "token_type": "bearer"}
+
+    response = JSONResponse(content={"message": "Login successful"})
+    
+    # ✅ Set cookie
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        max_age=60 * 60,  # 1 hour
+        expires=60 * 60,
+        samesite="Lax",
+        secure=False  # ⚠ Set to True in production (with HTTPS)
+    )
+    return response
 
 
 @router.post("/forgot-password")
@@ -88,19 +113,24 @@ def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
 
 
 
-# ✅ Utility to get current logged-in user
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)): 
-    try:
-        payload = decode_token(token)
-        user_id = payload.get("employee_id")
-        if user_id is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        user = db.query(User).filter(User.employee_id == user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        return user
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Token decode failed")
+def get_current_user(request: Request, db: Session = Depends(get_db)):
+    token = request.cookies.get("access_token")
+    if token is None:
+        raise HTTPException(status_code=401, detail="Not authenticated (token missing)")
+
+    payload = decode_token(token)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    employee_id = payload.get("employee_id")
+    if employee_id is None:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    user = db.query(User).filter(User.employee_id == employee_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return user
 
 
 # ✅ Example API using current logged-in user
@@ -900,7 +930,13 @@ def get_tasks_by_employees(
             "due_date": task.due_date,
             "assigned_to": task.assigned_to,
             "created_by": task.created_by,
-            "task_type": task.task_type
+            "status": task.status,
+            "output": task.output,
+            "created_at": task.created_at,
+            "updated_at": task.updated_at,
+            "task_type": task.task_type,
+            "is_review_required": task.is_review_required,
+            "is_reviewed": task.is_reviewed
         })
 
     return result
@@ -933,7 +969,30 @@ def get_subtasks_by_checklist(payload: ChecklistIDPayload, db: Session = Depends
             "description": task.description,
             "status": task.status,
             "assigned_to": task.assigned_to,
-            "due_date": task.due_date
+            "due_date": task.due_date,
+            "created_by": task.created_by,
+            "created_at": task.created_at,
+            "updated_at": task.updated_at,
+            "task_type": task.task_type,
+            "is_review_required": task.is_review_required,
+            "output": task.output
         })
 
     return subtasks
+
+@router.post("/get-Employee-Name")
+def get_employee_name(db: Session = Depends(get_db), Current_user: int = Depends(get_current_user)):
+    try:
+        employee = db.query(User).all()
+        if not employee:
+            raise HTTPException(status_code=404, detail="Employee not found")
+        employee_data = [{"employee_id": emp.employee_id, "Name": emp.username} for emp in employee]
+        return {"employees": employee_data}
+    
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error occurred while fetching employee list: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+    
+    

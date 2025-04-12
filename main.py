@@ -15,7 +15,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
     "http://localhost:3000",
-    "https://71e1-2401-4900-67aa-bf5e-2d49-e8df-91fa-c206.ngrok-free.app"
+    "https://eae8-49-47-217-1.ngrok-free.app"
 ],  # Update this in production
     allow_credentials=True,
     allow_methods=["*"],
