@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import or_, update
 from models.models import User,Task, TaskStatus, Checklist, TaskChecklistLink,TaskType,ChatRoom,ChatMessage,TaskStatusLog
 from schemas.schemas import UserCreate, UserLogin, ForgotPasswordRequest, ResetPasswordRequest,MasterCreate,CreateSubTaskRequest,CreateChecklistRequest,UpdateStatus,MarkComplete,UpdateTaskRequest,SendForReview,UpdateChecklistRequest,DeleteItemsRequest,ChatMessageCreate,ChatManager,EmployeeIDList,TaskIDPayload,ChecklistIDPayload
 from schemas.authy import hash_password, verify_password, create_access_token, decode_token,send_email,propagate_incomplete_upwards,update_parent_task_status,Mark_complete_help,propagate_incomplete_upwards_from_task,upload_output_to_all_reviews,log_status_change,get_related_tasks_checklists_logic
 from database.database import get_db
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPBearer, HTTPAuthorizationCredentials
 from datetime import timedelta, datetime
 from jose import JWTError
 import logging
@@ -44,13 +44,6 @@ def verify_token(token: str = Depends(oauth2_scheme)):
     if token in blacklisted_tokens:
         raise HTTPException(status_code=401, detail="Token has been invalidated")
     
-@router.post("/logout")
-def logout(token: str = Depends(oauth2_scheme)):
-    blacklisted_tokens.add(token)
-    return {"message": "Logged out successfully"}
-
-
-
 @router.post("/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == form_data.username).first()
@@ -60,16 +53,13 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     token = create_access_token({"sub": user.username, "employee_id": user.employee_id})
 
     response = JSONResponse(content={"message": "Login successful"})
-    
-    # ✅ Set cookie
     response.set_cookie(
         key="access_token",
         value=token,
         httponly=True,
         max_age=60 * 60,  # 1 hour
         expires=60 * 60,
-        samesite="Lax",
-        secure=False  # ⚠ Set to True in production (with HTTPS)
+        secure=False  # Set to True in production (with HTTPS)
     )
     return response
 
@@ -111,10 +101,17 @@ def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Password reset successful"}
 
+def get_current_back(token: str = Depends(oauth2_scheme)):
+    # Implement your token verification logic here
+    if not token:
+        raise HTTPException(status_code=401, detail="Invalid authentication credentials")
+    return {"token": token}
 
-
-def get_current_user(request: Request, db: Session = Depends(get_db)):
-    token = request.cookies.get("access_token")
+def get_current_user(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    token = request.cookies.get("access_token")  # Make sure this matches the actual cookie name!
     if token is None:
         raise HTTPException(status_code=401, detail="Not authenticated (token missing)")
 
@@ -131,7 +128,27 @@ def get_current_user(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
 
     return user
+@router.get("/users/me")
+async def read_users_me(token: str = Depends(oauth2_scheme)):
+    return {"token": token}
+@router.get("/dashboard")
+def dashboard(current_user: User = Depends(get_current_user)):
+    return {
+        "message": "Welcome to your dashboard!",
+        "employee_id": current_user.employee_id,
+        "username": current_user.username,
+        "email": current_user.email
+    }
 
+@router.post("/logout")
+def logout(response: Response):
+    response.delete_cookie(
+        key="access_token",
+        path="/",         
+        httponly=True,    
+        samesite="lax"    
+    )
+    return {"message": "Logged out"}
 
 # ✅ Example API using current logged-in user
 @router.get("/me")
