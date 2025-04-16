@@ -80,7 +80,7 @@ class TaskStatusLog(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(Integer, ForeignKey('tasks.task_id'), nullable=False)
-    old_status = Column(String, nullable=False)
+    old_status = Column(String, nullable=True)
     new_status = Column(String, nullable=False)
     changed_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 

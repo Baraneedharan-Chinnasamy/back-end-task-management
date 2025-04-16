@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import or_, update
 from models.models import User,Task, TaskStatus, Checklist, TaskChecklistLink,TaskType,ChatRoom,ChatMessage,TaskStatusLog
@@ -107,6 +107,7 @@ def get_current_back(token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
     return {"token": token}
 
+
 def get_current_user(
     request: Request,
     db: Session = Depends(get_db),
@@ -128,6 +129,8 @@ def get_current_user(
         raise HTTPException(status_code=404, detail="User not found")
 
     return user
+
+
 @router.get("/users/me")
 async def read_users_me(token: str = Depends(oauth2_scheme)):
     return {"token": token}
@@ -933,10 +936,20 @@ def get_status_history(task_id: int, db: Session = Depends(get_db)):
 
 @router.post("/tasks/by-employees")
 def get_tasks_by_employees(
-    payload: EmployeeIDList,
+    page: int = Query(1, ge=1),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    tasks = db.query(Task).filter(Task.assigned_to.in_(payload.employee_ids),Task.is_delete == False).all()
+    limit = 50  # fixed default
+    offset = (page - 1) * limit
+
+    query = db.query(Task).filter(
+        Task.assigned_to.in_(current_user.employee_ids),
+        Task.is_delete == False
+    )
+
+    total_count = query.count()
+    tasks = query.offset(offset).limit(limit).all()
 
     result = []
     for task in tasks:
@@ -956,7 +969,12 @@ def get_tasks_by_employees(
             "is_reviewed": task.is_reviewed
         })
 
-    return result
+    return {
+        "page": page,
+        "limit": limit,
+        "total": total_count,
+        "tasks": result
+    }
 
 @router.post("/task/checklists")
 def get_checklists_by_task(payload: TaskIDPayload, db: Session = Depends(get_db)):

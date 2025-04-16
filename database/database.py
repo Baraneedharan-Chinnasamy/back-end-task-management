@@ -16,7 +16,14 @@ DB_HOST = os.getenv("DB_HOST")
 DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/employeee_task"
 
 # Create the engine and session maker
-engine = create_engine(DATABASE_URL, pool_size=10, max_overflow=5)
+engine = create_engine(
+    DATABASE_URL,
+    pool_size=50,         
+    max_overflow=20,      
+    pool_timeout=30,      
+    pool_recycle=1800,    
+    pool_pre_ping=True    
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Function to get the database session (for FastAPI)
